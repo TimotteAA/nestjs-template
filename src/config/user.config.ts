@@ -1,7 +1,7 @@
 /**
  * 用户模块配置
  */
-import { createUserConfig } from '@/modules/user/helpers';
+import { createUserConfig } from '@/modules/new-user/helpers';
 
 export const user = createUserConfig((configure) => ({
     hash: 10,

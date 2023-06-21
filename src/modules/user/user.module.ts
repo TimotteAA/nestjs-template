@@ -1,53 +1,62 @@
-import { JwtModule, JwtModuleOptions } from '@nestjs/jwt';
-import { PassportModule } from '@nestjs/passport';
-
-import { Configure } from '../core/configure';
-
-import { EnvironmentType } from '../core/constants';
-
-import { ModuleBuilder } from '../core/decorators';
+import { forwardRef } from '@nestjs/common';
+import { AccessTokenEntity, RefreshTokenEntity, UserEntity, CodeEntity, MessageEntity, MessageReceiveEntity } from './entities';
+import { UserSubscriber } from './subscribers';
 import { DatabaseModule } from '../database/database.module';
+import { AuthService } from './services';
+import { PassportModule } from '@nestjs/passport';
+import { BullModule } from '@nestjs/bullmq';
+import { HttpModule } from "@nestjs/axios";
+
+import { RbacModule } from '../rbac/rbac.module';
+import { UserRbac } from './rbac';
+import { LocalAuthGuard, JwtAuthGuard, JwtWsGuard } from './guards';
+import { SEND_CAPTCHA_QUEUE, SAVE_MESSAGE_QUEUE } from './constants';
+import { CoreModule } from '../core/core.module';
+
+import * as repoMaps from "./repositorys";
+import * as strategiesMap from './strategies';
+import * as serviceMaps from './services';
+import * as queueMaps from "./queues";
+import * as gatewayMaps from "./gateways";
+
 import { addEntities, addSubscribers } from '../database/helpers';
+import { MediaModule } from '../media/media.module';
+import { ModuleBuilder } from '../core/decorators';
 
-import * as entities from './entities';
-import * as guards from './guards';
-import * as repositories from './repositories';
-import * as services from './services';
-import * as strategies from './strategies';
-import * as subscribers from './subscribers';
-import { UserConfig } from './types';
+const services = Object.values(serviceMaps);
+const strategies = Object.values(strategiesMap);
+// const controllers = Object.values(controllerMaps);
+const queues = Object.values(queueMaps);
+const repos = Object.values(repoMaps)
+const gateways = Object.values(gatewayMaps)
+const entities = [AccessTokenEntity, RefreshTokenEntity, UserEntity, CodeEntity, MessageEntity, MessageReceiveEntity];
 
-const jwtModuleRegister = (configure: Configure) => async (): Promise<JwtModuleOptions> => {
-    const config = await configure.get<UserConfig>('user');
-    const isProd = configure.getRunEnv() === EnvironmentType.PRODUCTION;
-    const option: JwtModuleOptions = {
-        secret: config.jwt.secret,
-        verifyOptions: {
-            ignoreExpiration: !isProd,
-        },
-    };
-    if (isProd) option.signOptions.expiresIn = `${config.jwt.token_expired}s`;
-    return option;
-};
-
-@ModuleBuilder(async (configure) => ({
+@ModuleBuilder(async configure => ({
+    // controllers: [...controllers, ...Object.values(manageMaps)],
     imports: [
+        (await addEntities(configure, entities)),
+        DatabaseModule.forRepository([...repos]),
         PassportModule,
-        JwtModule.registerAsync({
-            useFactory: jwtModuleRegister(configure),
-        }),
-        await addEntities(configure, Object.values(entities)),
-        DatabaseModule.forRepository(Object.values(repositories)),
+        AuthService.registerJwtModule(),
+        BullModule.registerQueue({name: SEND_CAPTCHA_QUEUE}),
+        BullModule.registerQueue({name: SAVE_MESSAGE_QUEUE}),
+        forwardRef(() => RbacModule),
+        forwardRef(() => MediaModule),
+        CoreModule,
+        HttpModule
     ],
     providers: [
-        ...Object.values(services),
-        ...(await addSubscribers(configure, Object.values(subscribers))),
-        ...Object.values(strategies),
-        ...Object.values(guards),
+        // UserSubscriber,
+        ...strategies,
+        ...services,
+        LocalAuthGuard,
+        JwtAuthGuard,
+        JwtWsGuard,
+        ...queues,
+        ...gateways,
+        UserRbac,
+        ...(await addSubscribers(configure, [UserSubscriber]))
     ],
-    exports: [
-        ...Object.values(services),
-        DatabaseModule.forRepository(Object.values(repositories)),
-    ],
+    exports: [...services, ...queues, DatabaseModule.forRepository([...repos])],
 }))
 export class UserModule {}

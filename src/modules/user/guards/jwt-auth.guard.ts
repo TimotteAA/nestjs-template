@@ -1,103 +1,77 @@
 import { ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { AuthGuard } from '@nestjs/passport';
-import { isNil } from 'lodash';
-import { ExtractJwt } from 'passport-jwt';
-
+import { TokenService } from '../services';
 import { ALLOW_GUEST } from '@/modules/restful/constants';
+import { ExtractJwt } from 'passport-jwt';
+import { isNil } from 'lodash';
 
-import { TokenService } from '../services/token.service';
-
-/**
- * 用户JWT认证守卫
- * 检测用户是否已登录
- */
 @Injectable()
-// @ts-ignore
 export class JwtAuthGuard extends AuthGuard('jwt') {
     constructor(protected reflector: Reflector, protected tokenService: TokenService) {
         super();
     }
 
-    /**
-     * 守卫方法
-     * @param context
-     */
     async canActivate(context: ExecutionContext) {
+        // 判断是否匿名访问
+        // 自己定义的crud框架
         const crudGuest = Reflect.getMetadata(
             ALLOW_GUEST,
             context.getClass().prototype,
             context.getHandler().name,
-            // 'list',
         );
+        // 定义在类上的默认值
         const defaultGuest = this.reflector.getAllAndOverride<boolean>(ALLOW_GUEST, [
             context.getHandler(),
             context.getClass(),
         ]);
         const allowGuest = crudGuest ?? defaultGuest;
-        console.log('crudGuest', crudGuest);
-        console.log(context.getClass());
-        // console.log('defaultGuest', defaultGuest);
-        const request = this.getRequest(context);
-        const response = this.getResponse(context);
-        // if (!request.headers.authorization) return false;
-        // 从请求头中获取token
-        // 如果请求头不含有authorization字段则认证失败
-        // token value
+        if (allowGuest) return true;
+        // 判断请求头中是否存在token
+        const request = context.switchToHttp().getRequest();
+        const response = context.switchToHttp().getResponse();
+        // xxx.xxx.xxx的字符串
         const requestToken = ExtractJwt.fromAuthHeaderAsBearerToken()(request);
-        if (isNil(requestToken) && !allowGuest) return false;
-        // 判断token是否存在,如果不存在则认证失败
-        const accessToken = isNil(requestToken)
-            ? undefined
-            : await this.tokenService.checkAccessToken(requestToken!);
-        console.log('accessToken', accessToken);
-        if (isNil(accessToken) && !allowGuest) throw new UnauthorizedException();
+        if (isNil(requestToken)) return false;
+        // requestToken
+        const tokenDb = await this.tokenService.findAccessToken(requestToken);
+        // console.log("tokenDb", tokenDb);
+        // console.log(requestToken)
+        if (isNil(tokenDb)) throw new UnauthorizedException();
+
         try {
-            // 检测token是否为损坏或过期的无效状态,如果无效则尝试刷新token
-
-            const result = await super.canActivate(context);
-            if (allowGuest) return true;
-            return result as boolean;
+            // console.log(1231231312313123131)
+            // 利用原生的进行校验
+            // const res =  await super.canActivate(context);
+            // console.log('res', res);
+           if (allowGuest) return true;
+            return (await super.canActivate(context)) as boolean;
         } catch (e) {
-            // 尝试通过refreshToken刷新token
-            // 刷新成功则给请求头更换新的token
-            // 并给响应头添加新的token和refreshtoken
-            if (!isNil(accessToken)) {
-                const token = await this.tokenService.refreshToken(accessToken, response);
-                if (isNil(token) && !allowGuest) return false;
-                if (token.accessToken) {
-                    request.headers.authorization = `Bearer ${token.accessToken.value}`;
-                }
-                // 刷新失败则再次抛出认证失败的异常
-                const result = await super.canActivate(context);
-                if (allowGuest) return true;
-                return result as boolean;
+            // console.log("err", e);
+            // 利用refreshToken刷新accessToken
+            // console.log("old tokens 1212121212121212121212121212121212")
+            const newTokens = await this.tokenService.refreshTokens(tokenDb, response);
+            // console.log("refreshed token", newTokens.accessToken.value)
+            if (isNil(newTokens)) {
+                // 刷新失败
+                throw new UnauthorizedException();
             }
-
-            return allowGuest;
+            // 刷新成功
+            if (newTokens.accessToken) {
+                // 加到请求头上去
+                request.headers.authorization = `Bearer ${newTokens.accessToken.value}`;
+                response.headers.token = newTokens.accessToken.value;
+            }
+            // 再次判断请求
+            return super.canActivate(context) as boolean;
         }
     }
 
-    /**
-     * 自动请求处理
-     * 如果请求中有错误则抛出错误
-     * 如果请求中没有用户信息则抛出401异常
-     * @param err
-     * @param user
-     * @param _info
-     */
-    handleRequest(err: any, user: any, _info: Error) {
+    handleRequest(err: any, user: any, _info: any) {
+        // You can throw an exception based on either "info" or "err" arguments
         if (err || !user) {
             throw err || new UnauthorizedException();
         }
         return user;
-    }
-
-    protected getRequest(context: ExecutionContext) {
-        return context.switchToHttp().getRequest();
-    }
-
-    protected getResponse(context: ExecutionContext) {
-        return context.switchToHttp().getResponse();
     }
 }

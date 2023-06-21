@@ -1,134 +1,140 @@
-import { Injectable } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
-import dayjs from 'dayjs';
-import { FastifyReply as Response } from 'fastify';
 import jwt from 'jsonwebtoken';
 import { v4 as uuid } from 'uuid';
-
-import { getTime } from '@/modules/core/helpers';
-
-import { AccessTokenEntity } from '../entities/access-token.entity';
-import { RefreshTokenEntity } from '../entities/refresh-token.entity';
-import { UserEntity } from '../entities/user.entity';
+import { Injectable } from '@nestjs/common';
+import { JwtPayload, UserConfig } from '../types';
+import { JwtService } from '@nestjs/jwt';
+import { AccessTokenEntity, RefreshTokenEntity, UserEntity } from '../entities';
+import dayjs from 'dayjs';
+import { FastifyReply as Response } from 'fastify';
+import { getTime } from '@/modules/utils';
 import { getUserConfig } from '../helpers';
-import { JwtConfig, JwtPayload } from '../types';
 
-/**
- * 令牌服务
- */
 @Injectable()
 export class TokenService {
-    constructor(protected readonly jwtService: JwtService) {}
+    // private readonly config: JwtConfig;
+    constructor(private jwtService: JwtService) {
+        // this.config = userConfigFn().jwt;
+    }
 
     /**
-     * 根据accessToken刷新AccessToken与RefreshToken
-     * @param accessToken
-     * @param response
+     * 刷新token
+     * @returns 新的accessToken或者null
      */
-    async refreshToken(accessToken: AccessTokenEntity, response: Response) {
-        const { user, refreshToken } = accessToken;
+    async refreshTokens(accessToken: AccessTokenEntity, response: Response) {
+        // 查找老的accessToken是否存在
+        const token = await this.findAccessToken(accessToken.value);
+        if (!token) return null;
+
+        const { user, refreshToken } = token;
         if (refreshToken) {
-            const now = await getTime();
             // 判断refreshToken是否过期
+            const now = await getTime()
+            // 过期了
             if (now.isAfter(refreshToken.expired_at)) return null;
-            // 如果没过期则生成新的access_token和refresh_token
             const token = await this.generateAccessToken(user, now);
+            // 删除老的accessToken
             await accessToken.remove();
-            response.header('token', token.accessToken.value);
+            // 把新的token加到响应上去
+            response.header('token', token);
             return token;
         }
         return null;
     }
 
     /**
-     * 根据荷载签出新的AccessToken并存入数据库
-     * 且自动生成新的Refresh也存入数据库
-     * @param user
-     * @param now
+     * 根据用户信息与当前时间创建accessToken与refreshToken
      */
     async generateAccessToken(user: UserEntity, now: dayjs.Dayjs) {
-        const config = await getUserConfig<JwtConfig>('jwt');
-        const accessTokenPayload: JwtPayload = {
+        const tokenPayload: JwtPayload = {
             sub: user.id,
             iat: now.unix(),
         };
 
-        const signed = this.jwtService.sign(accessTokenPayload);
+        const token = this.jwtService.sign(tokenPayload);
+        // 创建accessToken
         const accessToken = new AccessTokenEntity();
-        accessToken.value = signed;
+        accessToken.value = token;
         accessToken.user = user;
-        accessToken.expired_at = now.add(config.token_expired, 'second').toDate();
+        // 加上有效期
+        const jwtConfig = await getUserConfig<UserConfig['jwt']>("jwt")
+        // console.log("jwtConfig", jwtConfig)
+        accessToken.expired_at = now.add(jwtConfig.token_expired, 'second').toDate();
+        // 保存accessToken
         await accessToken.save();
         const refreshToken = await this.generateRefreshToken(accessToken, await getTime());
         return { accessToken, refreshToken };
     }
 
     /**
-     * 生成新的RefreshToken并存入数据库
+     * 创建RefreshToken
      * @param accessToken
      * @param now
+     * @returns
      */
-    async generateRefreshToken(
-        accessToken: AccessTokenEntity,
-        now: dayjs.Dayjs,
-    ): Promise<RefreshTokenEntity> {
-        const config = await getUserConfig<JwtConfig>('jwt');
+    async generateRefreshToken(accessToken: AccessTokenEntity, now: dayjs.Dayjs) {
+        // refreshToken payload，uuid
         const refreshTokenPayload = {
             uuid: uuid(),
         };
+        // 创建refreshToken
         const refreshToken = new RefreshTokenEntity();
-        refreshToken.value = jwt.sign(refreshTokenPayload, config.refresh_secret);
-        refreshToken.expired_at = now.add(config.refresh_token_expired, 'second').toDate();
+        const jwtConfig = await getUserConfig<UserConfig['jwt']>("jwt")
+        refreshToken.value = jwt.sign(refreshTokenPayload, jwtConfig.refresh_secret);
+        refreshToken.expired_at = now.add(jwtConfig.refresh_token_expired, 'second').toDate();
         refreshToken.accessToken = accessToken;
+        // 保存到数据库
         await refreshToken.save();
         return refreshToken;
     }
 
     /**
-     * 检查accessToken是否存在
-     * @param value
+     * 解析token，得到payload
+     * @param token 
      */
-    async checkAccessToken(value: string) {
+    async verifyAccessToken(token: string) {
+        const config = await getUserConfig<UserConfig['jwt']>("jwt")
+        return jwt.verify(token, config.secret);
+    }
+
+
+    /**
+     * 根据token值查找accessToken
+     */
+    async findAccessToken(value: string) {
         return AccessTokenEntity.findOne({
-            where: { value },
+            where: {
+                value,
+            },
             relations: ['user', 'refreshToken'],
         });
     }
 
     /**
-     * 移除AccessToken且自动移除关联的RefreshToken
-     * @param value
+     * 删除accessToken
      */
     async removeAccessToken(value: string) {
         const accessToken = await AccessTokenEntity.findOne({
-            where: { value },
+            where: {
+                value,
+            },
+            relations: ['refreshToken'],
         });
         if (accessToken) await accessToken.remove();
     }
 
     /**
-     * 移除RefreshToken
-     * @param value
+     * 删除refreshToken
      */
     async removeRefreshToken(value: string) {
         const refreshToken = await RefreshTokenEntity.findOne({
-            where: { value },
+            where: {
+                value,
+            },
             relations: ['accessToken'],
         });
         if (refreshToken) {
             if (refreshToken.accessToken) await refreshToken.accessToken.remove();
             await refreshToken.remove();
         }
-    }
-
-    /**
-     * 验证Token是否正确,如果正确则返回所属用户对象
-     * @param token
-     */
-    async verifyAccessToken(token: AccessTokenEntity) {
-        const config = await getUserConfig<JwtConfig>('jwt');
-        const result = jwt.verify(token.value, config.secret);
-        if (!result) return false;
-        return token.user;
     }
 }

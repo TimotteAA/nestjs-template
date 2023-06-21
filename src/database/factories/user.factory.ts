@@ -1,7 +1,7 @@
 import { Faker } from '@faker-js/faker';
 
 import { defineFactory } from '@/modules/database/helpers';
-import { UserEntity } from '@/modules/user/entities';
+import { UserEntity } from '@/modules/new-user/entities';
 
 export type IUserFactoryOptions = Partial<{
     [key in keyof UserEntity]: UserEntity[key];

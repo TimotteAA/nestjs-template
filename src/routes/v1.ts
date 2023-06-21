@@ -1,7 +1,7 @@
 import * as contentControllers from '@/modules/content/controllers';
 import { Configure } from '@/modules/core/configure';
 import { ApiVersionOption } from '@/modules/restful/types';
-import * as userControllers from '@/modules/user/controllers';
+import * as userControllers from '@/modules/new-user/controllers';
 
 export const v1 = async (configure: Configure): Promise<ApiVersionOption> => ({
     routes: [

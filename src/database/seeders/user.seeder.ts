@@ -3,9 +3,9 @@ import { DataSource, EntityManager } from 'typeorm';
 
 import { BaseSeeder } from '@/modules/database/base';
 import { DbFactory } from '@/modules/database/types';
-import { AccessTokenEntity, RefreshTokenEntity, UserEntity } from '@/modules/user/entities';
+import { AccessTokenEntity, RefreshTokenEntity, UserEntity } from '@/modules/new-user/entities';
 
-import { UserRepository } from '@/modules/user/repositories';
+import { UserRepository } from '@/modules/new-user/repositories';
 
 import { getCustomRepository } from '../../modules/database/helpers';
 import { IUserFactoryOptions } from '../factories/user.factory';

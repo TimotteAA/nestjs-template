@@ -1,31 +1,32 @@
-import { Injectable } from '@nestjs/common';
-import { PassportStrategy } from '@nestjs/passport';
-import { instanceToPlain } from 'class-transformer';
 import { ExtractJwt, Strategy } from 'passport-jwt';
-
-import { getUserConfig } from '../helpers';
-import { UserRepository } from '../repositories/user.repository';
+import { PassportStrategy } from '@nestjs/passport';
+import { Injectable } from '@nestjs/common';
 import { JwtPayload } from '../types';
+import { UserRepository } from '../repositorys';
+import { instanceToPlain } from 'class-transformer';
+import { env } from '@/modules/utils';
 
 /**
- * 用户认证JWT策略
+ * 登陆后访问的JWT策略
  */
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
-    constructor(private readonly userRepository: UserRepository) {
+    constructor(private userRepository: UserRepository) {
         super({
             jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
             ignoreExpiration: false,
-            secretOrKey: getUserConfig('jwt.secret'),
+            secretOrKey: env("SECRET"),
         });
     }
 
     /**
-     * 通过荷载解析出用户ID
-     * 通过用户ID查询出用户是否存在,并把id放入request方便后续操作
+     * 对用户携带的jwt payload进行解析
+     * 将解析出的user放到Request上去
      * @param payload
+     * @returns
      */
     async validate(payload: JwtPayload) {
+        // console.log(payload)
         const user = await this.userRepository.findOneOrFail({ where: { id: payload.sub } });
         return instanceToPlain(user);
     }

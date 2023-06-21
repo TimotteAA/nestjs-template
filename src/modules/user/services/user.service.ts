@@ -1,92 +1,283 @@
-import { Injectable } from '@nestjs/common';
-import { EntityNotFoundError, SelectQueryBuilder, DataSource } from 'typeorm';
-
-import { Configure } from '@/modules/core/configure';
-import { BaseService } from '@/modules/database/base';
+import { UserEntity } from '../entities';
+import { UserRepository } from '../repositorys';
+import { BaseService } from '@/modules/database/crud';
+import { BadRequestException, ForbiddenException, Injectable, OnModuleInit } from '@nestjs/common';
 import { QueryHook } from '@/modules/database/types';
+import { isBoolean, isNil, omit } from 'lodash';
+import { EntityNotFoundError, SelectQueryBuilder, In } from 'typeorm';
+import { QueryUserDto, CreateUserDto, UpdateUserDto } from '../dto';
+import { decrypt, getUserConfig } from "../helpers";
+import { SystemRoles } from '@/modules/rbac/constants';
+import { PermissionRepository, RoleRepository } from '@/modules/rbac/repository';
+import { UserConfig } from '../types'; 
+import { Configure } from '@/modules/core/configure';
 
-import { CreateUserDto, QueryUserDto, UpdateUserDto } from '../dtos/user.dto';
-import { UserEntity } from '../entities/user.entity';
-import { UserRepository } from '../repositories/user.repository';
+type FindParams = Omit<QueryUserDto, "limit" | 'page'>
 
-/**
- * 用户管理服务
- */
 @Injectable()
-export class UserService extends BaseService<UserEntity, UserRepository> {
-    protected enable_trash = true;
+export class UserService extends BaseService<UserEntity, UserRepository> implements OnModuleInit {
+    async onModuleInit() {
+        // 在运行cli时防止报错
+        // console.log(await this.configure.get("app"));
+        if (!(await this.configure.get<boolean>("app.server", false))) return null;
+        // console.log("user module init>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>")
+        const adminConf = await getUserConfig<UserConfig['super']>("super")
+        const admin = await this.repo.findOneBy({
+            username: adminConf.username
+        } as any)
+        if (!isNil(admin)) {
+            if (!admin.isCreator) {
+                await this.repo.save({ id: admin.id, isCreator: true });
+                return this.findOneByCredential(admin.username);
+            }
+            return admin;
+        }
+        const res = await this.repo.save({
+            ...adminConf,
+            isCreator: true,
+            phone: "+8617301780942",
+            email: "1273871844@qq.com"
+        });
+        return res;
+    }
 
-    constructor(
-        protected readonly userRepository: UserRepository,
-        protected configure: Configure,
-        protected dataSource: DataSource,
+    constructor(protected repo: UserRepository,
+        protected roleRepo: RoleRepository,
+        protected permissionRepo: PermissionRepository,
+        protected configure: Configure    
     ) {
-        super(userRepository);
+        super(repo);
     }
 
-    /**
-     * 创建用户
-     * @param data
-     */
-    async create(data: CreateUserDto) {
-        const user = await this.userRepository.save(data, { reload: true });
+    async create(data: CreateUserDto): Promise<UserEntity> {
+        const { roles, permissions, ...rest } = data;
+        const res = await this.repo.save(rest);
+
+        if (!isNil(roles) && roles.length > 0) {
+            await this.repo.createQueryBuilder("user")
+                    .relation(UserEntity, "roles")
+                    .of(res)
+                    .add(roles)
+        }
+
+        
+        if (!isNil(permissions) && permissions.length > 0) {
+            await this.repo.createQueryBuilder("user")
+                    .relation(UserEntity, "permissions")
+                    .of(res)
+                    .add(permissions)
+        }
+
+        const user = await this.detail(res.id);
+        await this.syncActived(user);
         return this.detail(user.id);
     }
 
-    /**
-     * 更新用户
-     * @param data
-     */
     async update(data: UpdateUserDto) {
-        const user = await this.userRepository.save(data, { reload: true });
-        return this.detail(user.id);
+        // id字段不更新
+        const { roles, permissions, ...rest } = data;
+        const user = await this.detail(data.id);
+        if (user.isCreator && data.actived === false) {
+            throw new ForbiddenException("can not disable superadmin")
+        }
+
+        const newRes = await this.repo.save(omit(rest, ["isCreator"]) as any, { reload: true });
+
+        
+        if (!isNil(roles) && roles.length > 0) {
+            await this.repo.createQueryBuilder("user")
+                    .relation(UserEntity, "roles")
+                    .of(newRes)
+                    .addAndRemove(
+                        roles ?? [],
+                        user.roles ?? []
+                    )
+        }
+
+        
+        if (!isNil(permissions) && permissions.length > 0) {
+            await this.repo.createQueryBuilder("user")
+                    .relation(UserEntity, "permissions")
+                    .of(newRes)
+                    .addAndRemove(
+                        permissions ?? [],
+                        user.permissions ?? []
+                    )
+        }
+
+        const res = await this.detail(newRes.id);
+        await this.syncActived(res);
+        return this.detail(res.id);
+    }
+
+    // 防止删除超级管理员
+    async delete(ids: string[], trash?: boolean): Promise<UserEntity[]> {
+        const users = await this.repo.find({
+            where: {
+                id: In(ids)
+            },
+            withDeleted: true
+        });
+        for (const user of users) {
+            if (user.isCreator) {
+                throw new ForbiddenException("can not delete first super admin user!")
+            }
+        }
+        return super.delete(ids, trash);
     }
 
     /**
-     * 根据用户用户凭证查询用户
+     * 根据邮箱或用户名查询用户
      * @param credential
      * @param callback
+     * @returns
      */
-    async findOneByCredential(credential: string, callback?: QueryHook<UserEntity>) {
-        let query = this.userRepository.buildBaseQuery();
-        if (callback) {
-            query = await callback(query);
-        }
-        return query
-            .where('user.username = :credential', { credential })
-            .orWhere('user.email = :credential', { credential })
-            .orWhere('user.phone = :credential', { credential })
+    async findOneByCredential(
+        credential: string,
+        callback?: QueryHook<UserEntity>,
+    ): Promise<UserEntity> {
+        let qb = this.repo.buildBaseQuery();
+        qb = callback ? await callback(qb) : qb;
+        return qb
+            .where(`${this.repo.getAlias()}.username = :credential`, {
+                credential,
+            })
+            .orWhere(`${this.repo.getAlias()}.email = :credential`, {
+                credential,
+            })
+            .orWhere(`${this.repo.getAlias()}.phone = :credential`, {
+                credential,
+            })
             .getOne();
     }
 
-    /**
-     * 根据对象条件查找用户,不存在则抛出异常
-     * @param condition
-     * @param callback
-     */
-    async findOneByCondition(condition: { [key: string]: any }, callback?: QueryHook<UserEntity>) {
-        let query = this.userRepository.buildBaseQuery();
-        if (callback) {
-            query = await callback(query);
+    async findOneByCondition(condition: Record<string, any>, callback?: QueryHook<UserEntity>) {
+        let qb = this.repo.buildBaseQuery();
+        qb = callback ? await callback(qb) : qb;
+        // console.log(condition);
+        // 遍历key与value，拼接where的查询条件
+        // const wheres = Object.fromEntries(
+        //     Object.entries(condition).map(([key, value]) => [`user.${key}`, value]),
+        // );
+
+        const keys = Object.keys(condition);
+        if (!isNil(keys) && keys.length) {
+            for (let i = 0; i < keys.length; i++) {
+                const key = keys[i];
+                if (i === 0) {
+                    qb = qb.where(`${this.repo.getAlias()}.${key} = :key`, {
+                        key: condition[key]
+                    })
+                } else {
+                    qb = qb.andWhere(`${this.repo.getAlias()}.${key} = :key`, {
+                        key: condition[key]
+                    })
+                }
+            }
         }
-        const wheres = Object.fromEntries(
-            Object.entries(condition).map(([key, value]) => [key, value]),
-        );
-        const user = query.where(wheres).getOne();
-        if (!user) {
-            throw new EntityNotFoundError(UserEntity, Object.keys(condition).join(','));
-        }
+
+        // console.log("wheres", wheres);
+        // const user = await qb.where(wheres).getOne();
+        const user = await qb.getOne();
+        if (isNil(user)) throw new EntityNotFoundError(UserEntity, 'user not found');
         return user;
     }
 
-    protected async buildListQB(
-        queryBuilder: SelectQueryBuilder<UserEntity>,
-        options: QueryUserDto,
-        callback?: QueryHook<UserEntity>,
-    ) {
-        const { orderBy } = options;
-        const qb = await super.buildListQB(queryBuilder, options, callback);
-        if (orderBy) qb.orderBy(`user.${orderBy}`, 'ASC');
+    /**
+     * 更新用户密码
+     * @param id 
+     * @param oldPassword 
+     * @param newPassword 
+     */
+    async updatePassword(id: string, oldPassword: string, newPassword: string) {
+        const user = await this.findOneByCondition({id})
+        if (!decrypt(oldPassword, user.password)) {
+            throw new BadRequestException(UserEntity, "旧密码输入错误");
+        }
+        // 更新密码
+        user.password = newPassword;
+        await user.save();
+        return this.detail(user.id);
+    }
+
+
+    protected async syncActived(user: UserEntity) {
+        const roleRelation = this.repo.createQueryBuilder()
+            .relation('roles')
+            .of(user);
+        const permissionRelation = this.repo.createQueryBuilder()
+            .relation("permissions")
+            .of(user)
+        // 激活的用户
+        if (user.actived) {
+            const roleNames = (user.roles ?? []).map(item => item.name);
+            // 是否没有角色
+            const noRoles = roleNames.length <= 0 ||    
+                (!roleNames.includes(SystemRoles.ADMIN) && !roleNames.includes(SystemRoles.USER));
+            const isSuperAdmin = roleNames.includes(SystemRoles.ADMIN);
+            
+            if (noRoles) {
+                // 分配普通角色
+                const customRole = await this.roleRepo.findOne({
+                    where: {
+                        name: SystemRoles.USER
+                    },
+                    relations: ['users']
+                });
+                if (!isNil(customRole)) await roleRelation.add(customRole)
+            } else if (isSuperAdmin) {
+                // 分配超级管理员角色
+                const adminRole = await this.roleRepo.findOne({
+                    where: {
+                        name: SystemRoles.ADMIN
+                    },
+                    relations: ['users']
+                });
+                if (!isNil(adminRole)) await roleRelation.addAndRemove(adminRole, user.roles)
+            }
+        } else {
+            // 没有激活的用户，删除所有权限与角色
+            await roleRelation.remove((user.roles ?? []).map(item => item.id));
+            await permissionRelation.remove((user.permissions ?? []).map(item => item.id))
+        }
+    }
+
+    /**
+     * 用于分页查询
+     * @param qb 
+     * @param options 
+     * @param callback 
+     */
+    protected async buildListQuery(qb: SelectQueryBuilder<UserEntity>, options: FindParams, callback?: QueryHook<UserEntity>) {
+        const alias = this.repo.getAlias();
+        // 是否查询回收站
+        // const { trashed } = options;
+        const { orderBy, isActive, role, permission } = options;
+        if (!isNil(orderBy)) {
+            qb = qb.orderBy(`${alias}.${orderBy}`, "ASC")
+        }
+
+        // console.log(role)
+        if (!isNil(role)) {
+            qb = qb.andWhere(`roles.id IN (:...roles)`, {
+                roles: [role]
+            })
+        }
+
+        // console.log(permission)
+        if (!isNil(permission)) {
+            qb = qb.andWhere('permissions.id IN (:...permissions)', {
+                permissions: [permission],
+            });
+        }
+
+        if (!isNil(isActive) && isBoolean(isActive)) {
+            qb = qb.andWhere(`${alias}.actived = :isActive`, { isActive })
+        }
+
+        // 额外查询，比如关联关系？
+        qb = !isNil(callback) ? await callback(qb) : qb;
+        qb = await super.buildListQuery(qb, options, callback);
         return qb;
     }
 }

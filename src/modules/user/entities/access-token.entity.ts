@@ -1,28 +1,26 @@
-import { Entity, ManyToOne, OneToOne } from 'typeorm';
-
-import { BaseToken } from './base.token';
+import { Entity, OneToOne, ManyToOne } from 'typeorm';
+import { BaseTokenEntity } from './base-token.entity';
 import { RefreshTokenEntity } from './refresh-token.entity';
 import { UserEntity } from './user.entity';
 
 /**
- * 用户认证token模型
+ * accessToken与refreshToken是一对的
  */
-@Entity('user_access_tokens')
-export class AccessTokenEntity extends BaseToken {
+@Entity('user_access_token')
+export class AccessTokenEntity extends BaseTokenEntity {
     /**
-     * @description 关联的刷新令牌
-     * @type {RefreshTokenEntity}
+     * 关联的refreshToken
      */
-    @OneToOne(() => RefreshTokenEntity, (refreshToken) => refreshToken.accessToken, {
-        cascade: true,
-    })
+    @OneToOne(
+        () => RefreshTokenEntity,
+        (refreshToken: RefreshTokenEntity) => refreshToken.accessToken,
+        {
+            cascade: true,
+        },
+    )
     refreshToken!: RefreshTokenEntity;
 
-    /**
-     * @description 所属用户
-     * @type {UserEntity}
-     */
-    @ManyToOne((type) => UserEntity, (user) => user.accessTokens, {
+    @ManyToOne(() => UserEntity, (user: UserEntity) => user.accessTokens, {
         onDelete: 'CASCADE',
     })
     user!: UserEntity;

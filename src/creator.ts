@@ -6,8 +6,8 @@ import { createApp } from '@/modules/core/helpers/app';
 import * as configs from './config';
 
 import { ContentModule } from './modules/content/content.module';
-import { JwtAuthGuard } from './modules/user/guards';
-import { UserModule } from './modules/user/user.module';
+import { JwtAuthGuard } from './modules/new-user/guards';
+import { UserModule } from './modules/new-user/user.module';
 
 export const creator = createApp({
     configs,
