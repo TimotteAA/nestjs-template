@@ -5,7 +5,7 @@ import { DeleteDto, ListQueryDto } from '../dtos';
 /**
  * 基础控制器
  */
-export abstract class BaseController<S> {
+export class BaseController<S> {
     protected service: S;
 
     constructor(service: S) {

@@ -36,27 +36,16 @@ export const registerCrud = async <T extends BaseController<any> | BaseControlle
 
             Object.defineProperty(Target.prototype, name, {
                 ...descriptor,
-                async value(...args: any[]) {
+                // async value(...args: any[]) {
+                //     return descriptor.value.apply(this, args);
+                // },
+                async [name](...args: any[]) {
                     return descriptor.value.apply(this, args);
                 },
             });
         }
 
         const descriptor = Object.getOwnPropertyDescriptor(Target.prototype, name);
-
-        // console.log(Target.prototype.);
-        // Target.prototype.name = name;
-
-        // // 保存路由方法
-        // if (Target instanceof BaseControllerWithTrash) {
-        //     // const handlerName = handlerDescriptor.value.name;
-        //     (Target.prototype as BaseControllerWithTrash<any>).saveMethodName(
-        //         Target.prototype,
-        //         name,
-        //     );
-        // } else if (Target instanceof BaseController) {
-        //     (Target.prototype as BaseController<any>).saveMethodName(Target.prototype, name);
-        // }
 
         const [, ...params] = Reflect.getMetadata('design:paramtypes', Target.prototype, name);
 
@@ -123,12 +112,6 @@ export const registerCrud = async <T extends BaseController<any> | BaseControlle
         if (option.allowGuest) Reflect.defineMetadata(ALLOW_GUEST, true, Target.prototype, name);
 
         if (!isNil(option.hook)) option.hook(Target, name);
-
-        const handlerDescriptor = Object.getOwnPropertyDescriptor(Target.prototype, name);
-
-        if (handlerDescriptor && handlerDescriptor.value) {
-            saveMethodName(Target.prototype, name); // 将方法名称保存为元数据
-        }
     }
 };
 

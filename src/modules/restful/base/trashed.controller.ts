@@ -5,7 +5,7 @@ import { DeleteWithTrashDto, ListWithTrashedQueryDto, RestoreDto } from '../dtos
 /**
  * 带软删除验证的控制器
  */
-export abstract class BaseControllerWithTrash<S> {
+export class BaseControllerWithTrash<S> {
     protected service: S;
 
     constructor(service: S) {

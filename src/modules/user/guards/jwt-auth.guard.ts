@@ -24,11 +24,6 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
      * @param context
      */
     async canActivate(context: ExecutionContext) {
-        const methodName = Reflect.getMetadata(
-            'methodName',
-            context.getHandler().constructor.prototype,
-        );
-        console.log('methodName', methodName);
         const crudGuest = Reflect.getMetadata(
             ALLOW_GUEST,
             context.getClass().prototype,
@@ -41,6 +36,7 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
         ]);
         const allowGuest = crudGuest ?? defaultGuest;
         console.log('crudGuest', crudGuest);
+        console.log(context.getClass());
         // console.log('defaultGuest', defaultGuest);
         const request = this.getRequest(context);
         const response = this.getResponse(context);
