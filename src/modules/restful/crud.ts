@@ -127,11 +127,7 @@ export const registerCrud = async <T extends BaseController<any> | BaseControlle
         const handlerDescriptor = Object.getOwnPropertyDescriptor(Target.prototype, name);
 
         if (handlerDescriptor && handlerDescriptor.value) {
-            // const handlerName = handlerDescriptor.value.name;
-            // console.log('handlerName', handlerName);
-            // console.log('Target', Target.prototype, name);
             saveMethodName(Target.prototype, name); // 将方法名称保存为元数据
-            // 将 handlerName 用于你的逻辑
         }
     }
 };

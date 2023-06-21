@@ -33,6 +33,7 @@ import {
 } from '../types';
 
 import { CreateModule, isAsyncFn, mergeMeta } from './utils';
+import { RedisModule } from '@/modules/redis/redis.module';
 
 /**
  * 创建应用的快捷函数
@@ -71,6 +72,7 @@ export async function createBootModule(
     if (configure.has('database')) importModules.push(DatabaseModule);
     if (configure.has('elastic')) importModules.push(ElasticModule);
     if (configure.has('api')) importModules.push(RestfulModule);
+    if (configure.has('redis')) importModules.push(RedisModule);
     const moduleMaps = await createImportModules(configure, importModules);
     const imports: ModuleMetadata['imports'] = Object.values(moduleMaps).map((m) => m.module);
     const providers: ModuleMetadata['providers'] = [];

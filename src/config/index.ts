@@ -4,3 +4,4 @@ export * from './content.config';
 export * from './app.config';
 export * from '../routes';
 export * from './user.config';
+export * from './redis.config';
